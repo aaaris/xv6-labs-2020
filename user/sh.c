@@ -1,6 +1,7 @@
 // Shell.
 
 #include "kernel/types.h"
+#include "kernel/stat.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
 
@@ -52,6 +53,15 @@ struct backcmd {
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
+
+int 
+isFile() {
+  struct stat st;
+  if (fstat(0,&st) < 0) {
+    panic("fstat fd 0 failed");
+  }
+  return st.type == T_FILE;
+}
 
 // Execute cmd.  Never returns.
 void
@@ -133,7 +143,8 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
-  fprintf(2, "$ ");
+  if (!isFile())  
+    fprintf(2, "$ ");
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if(buf[0] == 0) // EOF
