@@ -119,6 +119,8 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+  kvmcopy(pagetable,p->kpagetable,oldsz, 0);
+  kvmcopy(pagetable,p->kpagetable,0,p->sz);
 
   if (p->pid == 1)
     vmprint(p->pagetable);
@@ -127,6 +129,7 @@ exec(char *path, char **argv)
  bad:
   if(pagetable)
     proc_freepagetable(pagetable, sz);
+  kvmcopy(pagetable,p->kpagetable,sz, 0);
   if(ip){
     iunlockput(ip);
     end_op();

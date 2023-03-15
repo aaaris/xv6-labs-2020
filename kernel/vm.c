@@ -15,6 +15,12 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern int
+copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+
+extern int 
+copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);
+
 /*
  * create a direct-map page table for the kernel.
  */
@@ -379,23 +385,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,40 +395,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
-
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
-
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
-
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  return copyinstr_new(pagetable,dst,srcva,max);
 }
 
 void 
@@ -454,12 +411,14 @@ printrcs(pagetable_t pt, int level)
   for(i = 0; i < 512; i++) {
     pte = pt[i];
     if (pte & PTE_V) {
-      child = (pagetable_t)PTE2PA(pte);
       for(j = level; j < 3; j++) {
         printf("..%s", j < 2 ? " ": "" );
       }
+      child = (pagetable_t)PTE2PA(pte);
       printf("%d: pte %p pa %p\n", i, pte, child);
-      printrcs(child,level-1);
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+        printrcs(child,level-1);
+      }
     }
   }
 }
@@ -469,4 +428,40 @@ vmprint(pagetable_t pt)
 {
   printf("page table %p\n",pt);
   printrcs(pt,2);
+}
+
+void 
+kvmcopy(pagetable_t upt, pagetable_t kpt, int old_sz, int new_sz) 
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for(i = old_sz; i < new_sz; i+=PGSIZE) {
+    if((pte = walk(upt, i, 0)) == 0)
+      panic("kvmcopy: pte should exist in user");
+    if((*pte & PTE_V) == 0) {
+      panic("kvmcopy: page not present in user");
+      continue;
+    }
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+    // 用户内核页表，清除 PTE_U 置位
+    flags &= (~PTE_U);
+    if ((pte = walk(kpt,i,1)) == 0) {
+      panic("kvmcopy: pte should not exist in kernel");
+    }
+    *pte = PA2PTE(pa) | flags;
+  }
+  if (new_sz < old_sz) {
+    new_sz = PGROUNDUP(new_sz);
+    for (i = new_sz; i < old_sz; i+=PGSIZE) {
+      if ((pte = walk(kpt, i, 0)) == 0)  
+        panic("kvmcopy: pte should exist in kernel");
+      if((*pte & PTE_V) == 0)
+        panic("kvmcopy: page not present in kernel");
+      // 去标志位
+      *pte = 0;
+    }
+  }
 }

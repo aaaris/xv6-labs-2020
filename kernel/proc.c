@@ -225,8 +225,8 @@ proc_kpagetable()
   // virtio mmio disk interface
   proc_kvmmap(kernel_pt, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
-  // CLINT
-  proc_kvmmap(kernel_pt, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  // CLINT 低于 PLIC
+  // proc_kvmmap(kernel_pt, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 
   // PLIC
   proc_kvmmap(kernel_pt, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
@@ -264,8 +264,10 @@ proc_freewalk(pagetable_t pt, int level)
     pte_t pte = pt[i];
     if(pte & PTE_V){
       // this PTE points to a lower-level page table.
-      uint64 child = PTE2PA(pte);
-      proc_freewalk((pagetable_t)child, level + 1);
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);
+        proc_freewalk((pagetable_t)child, level + 1);
+      }
       pt[i] = 0;
     } 
   }
@@ -296,6 +298,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  kvmcopy(p->pagetable,p->kpagetable,0,p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -319,11 +322,16 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if (PGROUNDUP(sz + n) >= PLIC) {
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    kvmcopy(p->pagetable, p->kpagetable, sz - n,sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    kvmcopy(p->pagetable, p->kpagetable, sz - n, sz);
   }
   p->sz = sz;
   return 0;
@@ -350,6 +358,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  kvmcopy(np->pagetable,np->kpagetable,0,np->sz);
 
   np->parent = p;
 
