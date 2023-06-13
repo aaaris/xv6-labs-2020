@@ -137,11 +137,14 @@ void
 backtrace()
 {
   uint64 addr, p;
-  // backtrace fp
+  printf("backtrace: \n");
+  // Get backtrace frame pointer
   p = r_fp();
   addr = p;
   while(p > PGROUNDDOWN(addr) && p < PGROUNDUP(addr)) {
+    // Print return addr
     printf("%p\n", *(uint64 *)(p-8));
+    // Goto prev frame pointer
     p = *(uint64 *)(p-16);
   } 
 }
