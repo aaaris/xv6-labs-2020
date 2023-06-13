@@ -77,8 +77,19 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) { 
+    // invoke alarm handler if proc exist alarm handler 
+    if (p->alarm_interval && p->ticks_counter) {
+      p->ticks_counter --;
+      if (p->ticks_counter == 0) {
+        // store current context      
+        memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));
+        // set epc 
+        p->trapframe->epc = (uint64)p->alarm_handler;
+      } 
+    }
     yield();
+  }
 
   usertrapret();
 }
@@ -213,6 +224,10 @@ devintr()
     w_sip(r_sip() & ~2);
 
     return 2;
+  } else if (scause == 0x000000000000000c){
+    // handle page fault
+    // child copy on write
+    return 1;
   } else {
     return 0;
   }
